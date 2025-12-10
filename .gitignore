@@ -17,3 +17,22 @@ Thumbs.db
 # Temp
 *.log
 *.tmp
+
+# MkDocs
+site/
+docs/  # Generated from GUIDE.md via explode script
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+ENV/
+env/
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*

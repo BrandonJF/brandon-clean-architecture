@@ -1,0 +1,20 @@
+{
+  "name": "brandon-clean-architecture",
+  "version": "1.0.0",
+  "description": "Brandon's opinionated Clean Architecture guide for TypeScript/Next.js",
+  "scripts": {
+    "explode": "node scripts/explode-markdown.js",
+    "docs:dev": "mkdocs serve",
+    "docs:build": "mkdocs build",
+    "docs:deploy": "mkdocs gh-deploy"
+  },
+  "keywords": [
+    "clean-architecture",
+    "typescript",
+    "nextjs",
+    "architecture",
+    "guide"
+  ],
+  "author": "Brandon John-Freso",
+  "license": "MIT"
+}
