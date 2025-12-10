@@ -14,6 +14,17 @@
 
 This is my answer. A comprehensive guide reflecting core principles with my own sprinkle on top, built from experience at WeWork, OkCupid, and now running [Pier](https://pier.so), where I manage teams of AI agents building more AI.
 
+### Who This Is For
+
+This guide is for you if:
+
+- ✅ You're comfortable with **TypeScript and Next.js** (app router)
+- ✅ You've felt the pain of **"everything in lib/ / utils/"** architectures
+- ✅ You're okay with **light FP ideas** (immutability, pure functions) but not looking for hardcore category theory
+- ✅ You want **clear patterns** that scale from side projects to production teams
+
+If you're just starting with TypeScript or Next.js, you might want to build a few projects first before diving into architectural patterns. This guide assumes you already know the tools and are ready to organize them better.
+
 ---
 
 ## Table of Contents
