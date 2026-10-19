@@ -1,8 +1,8 @@
 # Brandon's Clean Architecture Guide
 
-**My opinionated take on Clean Architecture** for TypeScript/Next.js projects, distilled from over 15 years of building production systems across web, mobile, and AI platforms. A definitive guide optimized for TypeScript/Next.js projects with strong functional programming bias, SOLID principles, and pragmatic developer ergonomics.
+**My opinionated take on Clean Architecture** for TypeScript applications. TwelveApart uses this guide as its canonical, agent-readable architecture reference. The guide keeps a functional programming bias, SOLID principles and explicit boundaries across web, CLI and AI applications; its Next.js examples illustrate one legitimate platform adaptation.
 
-**Last Updated**: 2025-12-09
+**Last Updated**: 2026-10-19
 **Author**: [Brandon John-Freso](https://www.linkedin.com/in/brandonjf)
 **License**: MIT
 
@@ -18,12 +18,12 @@ This is my answer. A comprehensive guide reflecting core principles with my own 
 
 This guide is for you if:
 
-- ✅ You're comfortable with **TypeScript and Next.js** (app router)
+- ✅ You know **TypeScript** and a product framework; the Next.js examples assume app-router familiarity
 - ✅ You've felt the pain of **"everything in lib/ / utils/"** architectures
 - ✅ You're okay with **light FP ideas** (immutability, pure functions) but not looking for hardcore category theory
 - ✅ You want **clear patterns** that scale from side projects to production teams
 
-If you're just starting with TypeScript or Next.js, you might want to build a few projects first before diving into architectural patterns. This guide assumes you already know the tools and are ready to organize them better.
+If you have just started TypeScript, build a small application first. This guide assumes that you know your tools and want to organize them around stable operations and interfaces.
 
 ---
 
@@ -41,6 +41,9 @@ If you're just starting with TypeScript or Next.js, you might want to build a fe
 10. [Next.js Integration](#nextjs-integration)
 11. [Common Patterns](#common-patterns)
 12. [Migration Strategies](#migration-strategies)
+13. [Shared Capabilities & Governance](#shared-capabilities--governance)
+14. [Summary: Quick Reference Checklist](#summary-quick-reference-checklist)
+15. [Appendix: Example Project Structure](#appendix-example-project-structure)
 
 ---
 
@@ -48,17 +51,17 @@ If you're just starting with TypeScript or Next.js, you might want to build a fe
 
 ### What I Value
 
-1. **Domain Isolation** - Business rules are pure, reusable, and independent of frameworks
+1. **Domain Isolation** - Domain functions express pure, reusable rules without framework dependencies
 2. **Simple Vocabulary** - Clear, descriptive naming over jargon
 3. **Dependency Inversion** - Abstractions over concretions at every boundary
 4. **Declarative Over Imperative** - Express *what*, not *how*
-5. **Fast Tests** - Domain/use-case tests run in <50ms each
+5. **Fast Tests** - Authors keep domain/use-case feedback fast; <50 ms per small unit test serves as a goal, not an architectural deadline
 6. **Developer Ergonomics** - Easy to navigate, understand, and modify
 7. **Zero Framework Coupling in Core** - Business logic never imports from frameworks
 
 ### What I Avoid
 
-- ❌ Heavy hexagonal architecture jargon ("ports", "gateways", "presenters" as type names)
+- ❌ Jargon that obscures a capability: prefer `Transcriber` to an unexplained generic `ServiceManager`
 - ❌ Framework dependencies in domain/application layers
 - ❌ Heavy mocking frameworks (prefer test doubles)
 - ❌ Generic `lib/` junk drawers
@@ -72,11 +75,11 @@ If you're just starting with TypeScript or Next.js, you might want to build a fe
 **Clean Architecture with Functional Programming Bias**
 
 - **Pure functions** for domain logic whenever possible
-- **Classes** for entities with behavior and use-cases with dependencies
+- **Classes** when behavior or invariants justify an instance; **functions** also express use cases with explicit dependencies
 - **Interfaces** for all architectural boundaries
 - **Explicit composition** over DI containers (type safety + simplicity)
 - **Immutability by default** (`const`, spread operators, no mutations)
-- **Push errors upward** - don't catch too early
+- **Explicit outcomes** for expected failures; let unexpected exceptions reach the boundary that can handle them
 
 ### Use-Case–Centric Design
 
@@ -118,20 +121,22 @@ This does lean a bit toward an "application-service–centric" style rather than
 │   - Entities                            │
 │   - Value Objects                       │
 │   - Business Rules                      │
-│   - Repository Interfaces               │
-│   - Service Interfaces                  │
+│   - Domain-owned Contracts              │
+│   - Pure Policies                       │
 └─────────────────────────────────────────┘
 ```
 
 ### Layer Rules
+
+The examples show focused excerpts, not one copy-and-paste application. Each capability supplies its own imports, complete records, decoders and configuration. Domain owns meaning, application owns workflows and their consumed IO interfaces, and infrastructure implements effects.
 
 #### Domain Layer (Innermost)
 **Responsibilities:**
 - Encapsulate invariants and domain rules
 - Entities with focused behavior (validation, state transitions)
 - Value objects (immutable, validated types)
-- Repository interfaces (contracts)
-- Service interfaces (e.g., `Llm`, `EmailService`)
+- Contracts that express genuine domain abstractions
+- Pure policies; application workflows own their IO interfaces
 
 **What belongs here:**
 - Local invariants (valid email, non-empty ID, password constraints)
@@ -144,7 +149,7 @@ This does lean a bit toward an "application-service–centric" style rather than
 - Knowledge of infrastructure details
 
 **Import Rules:**
-- ✅ Can import: Other domain types only
+- ✅ Can import: Domain types, pure functions and explicitly permitted runtime-neutral libraries
 - ❌ Cannot import: Application, Infrastructure, Frameworks
 
 **Examples:**
@@ -155,7 +160,7 @@ export class User {
     public readonly id: UserId,
     public readonly email: Email,
     public readonly profile: UserProfile,
-    private status: UserStatus
+    private readonly status: UserStatus
   ) {}
 
   static create(props: CreateUserProps): User {
@@ -163,14 +168,14 @@ export class User {
     if (!props.email.isValid()) {
       throw new InvalidEmailError(props.email.value);
     }
-    return new User(/* ... */);
+    return new User(props.id, props.email, props.profile, props.status);
   }
 
-  activate(): void {
+  activate(): User {
     if (this.status.isActive()) {
       throw new UserAlreadyActiveError(this.id);
     }
-    this.status = UserStatus.active();
+    return new User(this.id, this.email, this.profile, UserStatus.active());
   }
 
   // Domain rule: business logic method
@@ -179,14 +184,19 @@ export class User {
   }
 }
 
-// domain/repositories/user-repository.ts
+```
+
+Application owns the IO contracts its registration workflow consumes:
+
+```typescript
+// application/repositories/user-repository.ts
 export interface UserRepository {
   findById(id: UserId): Promise<User | null>;
   save(user: User): Promise<void>;
   findByEmail(email: Email): Promise<User | null>;
 }
 
-// domain/services/email-service.ts
+// application/services/email-service.ts
 export interface EmailService {
   sendWelcomeEmail(user: User): Promise<void>;
   sendPasswordReset(email: Email, token: string): Promise<void>;
@@ -199,6 +209,7 @@ export interface EmailService {
 - Orchestrate domain entities and services
 - Define Input/Output types for operations
 - Application-level validation
+- Interfaces for workflow IO: repositories, generators, email senders and snapshot readers
 
 **Import Rules:**
 - ✅ Can import: Domain (entities, interfaces, value objects)
@@ -215,18 +226,20 @@ The **Domain layer is responsible for rules and invariants**, not full workflows
 
 Multi-step processes, branching logic, and orchestration across multiple repositories or services live in use-cases, not on entities. This keeps entities/value objects small and predictable while making use-cases the clearest place to read "what actually happens" for a given operation.
 
+The registration excerpts use a declared exception convention for expected conflicts; the Error Handling section also shows typed outcomes. A failed welcome email after persistence does not roll back the saved user. Products that require durable notification delivery should commit an outbox entry with the registration and send it separately.
+
 **Examples:**
 ```typescript
 // application/use-cases/register-user/register-user-use-case.ts
 export interface RegisterUserInput {
-  email: string;
-  password: string;
-  name: string;
+  readonly email: string;
+  readonly password: string;
+  readonly name: string;
 }
 
 export interface RegisterUserOutput {
-  userId: string;
-  success: boolean;
+  readonly userId: string;
+  readonly success: true;
 }
 
 export class RegisterUserUseCase {
@@ -237,7 +250,7 @@ export class RegisterUserUseCase {
   ) {}
 
   async execute(input: RegisterUserInput): Promise<RegisterUserOutput> {
-    // 1. Create value objects
+    // 1. Decode input at transport, then enforce domain invariants
     const email = Email.create(input.email);
     const hashedPassword = await this.passwordHasher.hash(input.password);
 
@@ -322,129 +335,48 @@ export class ResendEmailService implements EmailService {
 
 ## Directory Structure
 
-### Feature-Based Organization (Preferred)
+### Capability Modules (Reference Shape)
 
-Organize by **feature first**, then **layer within feature**:
+Organize code by capability under `src/modules/<capability>`, then add only the layers that capability needs. Existing projects may retain `features/` as an alias until cohesive work reaches that owner. An empty folder does not enforce architecture.
 
-```
+```text
 src/
-├── features/                          # Feature modules
-│   ├── auth/
-│   │   ├── domain/
-│   │   │   ├── entities/
-│   │   │   │   ├── user.ts
-│   │   │   │   └── index.ts
-│   │   │   ├── value-objects/
-│   │   │   │   ├── email.ts
-│   │   │   │   ├── user-id.ts
-│   │   │   │   └── index.ts
-│   │   │   ├── repositories/
-│   │   │   │   ├── user-repository.ts
-│   │   │   │   └── index.ts
-│   │   │   ├── services/
-│   │   │   │   ├── email-service.ts
-│   │   │   │   └── index.ts
-│   │   │   ├── errors/
-│   │   │   │   ├── user-errors.ts
-│   │   │   │   └── index.ts
-│   │   │   └── index.ts               # Barrel export
-│   │   ├── application/
-│   │   │   ├── use-cases/
-│   │   │   │   ├── register-user/
-│   │   │   │   │   ├── register-user-use-case.ts
-│   │   │   │   │   ├── types.ts
-│   │   │   │   │   └── index.ts
-│   │   │   │   ├── login/
-│   │   │   │   │   ├── login-use-case.ts
-│   │   │   │   │   ├── types.ts
-│   │   │   │   │   └── index.ts
-│   │   │   │   └── index.ts
-│   │   │   └── index.ts
-│   │   ├── infrastructure/
-│   │   │   ├── repositories/
-│   │   │   │   ├── prisma-user-repository.ts
-│   │   │   │   ├── in-memory-user-repository.ts
-│   │   │   │   └── index.ts
-│   │   │   ├── services/
-│   │   │   │   ├── resend-email-service.ts
-│   │   │   │   ├── fake-email-service.ts
-│   │   │   │   └── index.ts
-│   │   │   ├── mappers/
-│   │   │   │   ├── user-mapper.ts
-│   │   │   │   └── index.ts
-│   │   │   └── index.ts
-│   │   ├── composition-root.ts        # DI wiring for this feature
-│   │   └── index.ts                   # Feature public API
-│   │
-│   ├── billing/
-│   │   ├── domain/
-│   │   ├── application/
-│   │   ├── infrastructure/
-│   │   ├── composition-root.ts
-│   │   └── index.ts
-│   │
-│   └── analytics/
+├── modules/
+│   └── auth/
+│       ├── README.md
+│       ├── index.ts                   # Portable contracts and operations
+│       ├── presentation.ts            # React-only public exports, when needed
 │       ├── domain/
+│       │   ├── entities/user.ts
+│       │   └── value-objects/email.ts
 │       ├── application/
+│       │   ├── repositories/user-repository.ts
+│       │   ├── services/email-service.ts
+│       │   └── use-cases/register-user/register-user-use-case.ts
 │       ├── infrastructure/
-│       ├── composition-root.ts
-│       └── index.ts
-│
-├── ui/                                # UI layer (Next.js specific)
-│   ├── components/
-│   │   ├── auth/
-│   │   │   ├── login-form.tsx
-│   │   │   ├── register-form.tsx
-│   │   │   └── index.ts
-│   │   ├── shared/
-│   │   │   ├── button.tsx
-│   │   │   ├── card.tsx
-│   │   │   └── index.ts
-│   │   └── index.ts
-│   ├── hooks/
-│   │   ├── use-auth.ts
-│   │   ├── use-user.ts
-│   │   └── index.ts
-│   └── index.ts
-│
-├── app/                               # Next.js app directory
-│   ├── (auth)/
-│   │   ├── login/
-│   │   │   └── page.tsx
-│   │   └── register/
-│   │       └── page.tsx
-│   ├── api/
-│   │   └── auth/
-│   │       └── register/
-│   │           └── route.ts
+│       │   ├── repositories/prisma-user-repository.ts
+│       │   └── services/resend-email-service.ts
+│       ├── api/
+│       │   └── composition.ts         # Concrete server wiring
+│       ├── components/register-form.tsx
+│       └── hooks/use-registration.ts
+├── shared/
+│   ├── kernel/                        # Small, stable domain-neutral contracts
+│   └── ui/                            # Shared presentation primitives
+├── app/                               # Next.js transport and rendering
+│   ├── api/auth/register/route.ts
 │   └── layout.tsx
-│
-├── core/                              # Cross-cutting concerns
-│   ├── errors/
-│   │   ├── base-error.ts
-│   │   ├── domain-error.ts
-│   │   └── index.ts
-│   ├── types/
-│   │   ├── common.ts
-│   │   └── index.ts
-│   └── utils/
-│       ├── date.ts
-│       ├── string.ts
-│       └── index.ts
-│
-└── config/
-    ├── env.ts
-    └── constants.ts
+└── config/env.ts                      # Product-owned boundary configuration
 ```
 
 ### Key Principles
 
-1. **Feature folders contain all layers** - `features/{feature}/{domain,application,infrastructure}`
-2. **Barrel exports everywhere** - Every directory has `index.ts`
-3. **Types in separate files** - `types.ts` for clarity, co-located with implementation
-4. **UI separated** - `ui/` folder for React components, hooks
-5. **App is infrastructure** - Next.js `app/` directory is framework layer
-6. **Shared concerns in `core/`** - Not `lib/`, not `shared/`, use `core/` sparingly
+1. **Capability ownership.** A module owns its rules, workflows and adapters; UI may live alongside its capability. Teams keep a global UI folder only for genuinely shared presentation.
+2. **Consumer-owned interfaces.** Domain owns domain abstractions; application owns workflow IO. Infrastructure implements those contracts.
+3. **Public boundaries.** Each module exposes an `index.ts` and README. Cross-module callers use the public API. Owners may use private relative imports internally; they need no barrel in every directory.
+4. **Runtime separation.** Keep React and concrete server/browser adapters out of the portable root. Expose UI through `presentation.ts`, composition through `api/`, and package runtimes through explicit subpaths such as `/react` or `/node`.
+5. **Focused types.** Use `domain/types.ts` or a focused `contracts.ts` for records; colocate a small operation type with its owner when that improves clarity.
+6. **Small shared kernel.** Share stable domain-neutral contracts deliberately. Prefer a capability owner to a generic `utils` or `server` bucket; keep standard-library one-liners local. Never impose one product's entire error-code union on every product.
 
 ---
 
@@ -454,7 +386,7 @@ src/
 
 | Type | Pattern | Examples |
 |------|---------|----------|
-| **Use Case** | `<verb>-<noun>-use-case.ts` | `register-user-use-case.ts`, `calculate-invoice-use-case.ts` |
+| **Use Case** | `<verb>-<noun>-use-case.ts` or `<verb>-<noun>.ts` | `register-user-use-case.ts`, `extract-propositions.ts` |
 | **Entity** | `<noun>.ts` | `user.ts`, `invoice.ts`, `subscription.ts` |
 | **Value Object** | `<noun>.ts` | `email.ts`, `user-id.ts`, `money.ts` |
 | **Repository Interface** | `<noun>-repository.ts` | `user-repository.ts`, `order-repository.ts` |
@@ -463,17 +395,17 @@ src/
 | **Service Impl** | `<provider>-<noun>-service.ts` | `resend-email-service.ts`, `stripe-payment-service.ts` |
 | **Mapper** | `<noun>-mapper.ts` | `user-mapper.ts`, `invoice-mapper.ts` |
 | **Test Double** | `fake-<noun>.ts` or `in-memory-<noun>.ts` | `fake-email-service.ts`, `in-memory-user-repository.ts` |
-| **Types** | `types.ts` | Co-located with implementation |
+| **Types** | `types.ts`, `contracts.ts`, or a small colocated declaration | Keep types with their owning capability |
 | **Errors** | `<domain>-errors.ts` | `user-errors.ts`, `auth-errors.ts` |
 | **Component** | `<noun>.tsx` or `<noun>-<type>.tsx` | `button.tsx`, `login-form.tsx` |
 | **Hook** | `use-<noun>.ts` | `use-auth.ts`, `use-user-data.ts` |
-| **Barrel Export** | `index.ts` | Every directory |
+| **Public Entry** | `index.ts`, plus explicit runtime entries | Module/package root; `presentation.ts`, `/node` |
 
 ### Classes & Interfaces
 
 | Type | Pattern | Examples |
 |------|---------|----------|
-| **Use Case** | `<Verb><Noun>UseCase` | `RegisterUserUseCase`, `CalculateInvoiceUseCase` |
+| **Use Case** | `<Verb><Noun>UseCase` or `verbNoun` | `RegisterUserUseCase.execute`, `extractPropositions` |
 | **Entity** | `<Noun>` | `User`, `Invoice`, `Subscription` |
 | **Value Object** | `<Noun>` | `Email`, `UserId`, `Money` |
 | **Repository** | `<Noun>Repository` (interface) | `UserRepository`, `OrderRepository` |
@@ -483,6 +415,22 @@ src/
 | **Error** | `<Noun>Error` | `InvalidEmailError`, `UserNotFoundError` |
 | **Mapper** | `<Noun>Mapper` | `UserMapper`, `InvoiceMapper` |
 | **Config** | `<Noun>Config` | `EmailConfig`, `DatabaseConfig` |
+
+### Operation Vocabulary
+
+Name use cases with a verb and its object. A class uses `ExtractPropositionsUseCase.execute(input)`; a function uses `extractPropositions(input, dependencies)`. Name interfaces for capabilities: `StructuredGenerator.generate`, `Transcriber.transcribe`, `RepositorySnapshotReader.readRevision`, `ErrorReporter.report`.
+
+| Verb | Contract meaning |
+|------|------------------|
+| `find` | Optional lookup; return an explicit absence such as `null` |
+| `get` | Required lookup; declare the missing outcome |
+| `list` | Collection; declare ordering and pagination |
+| `save` | Persistence; declare overwrite, concurrency and atomicity semantics |
+| `extract` | Structured material from a source |
+| `assess` | Judgment under a named policy |
+| `delete` | Removal; declare absent-item and retention behavior |
+
+Authors name side effects, expected failures and ordering in each operation contract. Avoid generic `run`, `process` or `handle` when the domain offers a clearer verb. A **port** means an interface at a boundary; authors need not append `Port`, `Service` or `Gateway` to every name. Provider names belong in implementations or factories, such as `createAiSdkStructuredGenerator`. Teams retain existing names until cohesive work reaches that operation.
 
 ### Variables & Constants
 
@@ -514,11 +462,11 @@ const hasPermission = user.canAccessFeature(feature);
 
 **Rule**: High-level modules (use-cases) should not depend on low-level modules (databases, APIs). Both should depend on abstractions (interfaces).
 
-#### Pattern: Interface in Domain, Implementation in Infrastructure
+#### Pattern: Interface in the Consuming Inner Layer
 
 ```typescript
 // ✅ CORRECT
-// domain/repositories/user-repository.ts
+// application/repositories/user-repository.ts
 export interface UserRepository {
   findById(id: UserId): Promise<User | null>;
   save(user: User): Promise<void>;
@@ -559,12 +507,12 @@ export class GetUserUseCase {
 }
 ```
 
-### Constructor Injection
+### Explicit Dependency Injection
 
-**All dependencies must be injected via constructor parameters.**
+The consuming inner layer owns each interface: domain for genuine domain abstractions, application for workflow IO. Inject dependencies through constructors, explicit function parameters or factories. Never acquire infrastructure through a hidden core singleton. Framework transport and persistence types stop at adapters.
 
 ```typescript
-// ✅ CORRECT: Dependencies injected
+// ✅ CORRECT: The caller injects dependencies
 export class RegisterUserUseCase {
   constructor(
     private userRepo: UserRepository,
@@ -573,7 +521,7 @@ export class RegisterUserUseCase {
   ) {}
 }
 
-// ❌ WRONG: Dependencies created inside class
+// ❌ WRONG: The class acquires concrete dependencies
 export class RegisterUserUseCase {
   private userRepo = new PrismaUserRepository(new PrismaClient()); // ❌
   private emailService = new ResendEmailService(new Resend()); // ❌
@@ -589,17 +537,44 @@ export class RegisterUserUseCase {
 }
 ```
 
-### Composition Root Pattern
+### Function Use Cases
 
-**Single location per feature where all dependencies are wired together.**
+Functions follow the same dependency rule as classes. This use case consumes an application-owned IO contract; its caller supplies the implementation.
 
 ```typescript
-// features/auth/composition-root.ts
+// modules/documents/application/extract-propositions.ts
+export interface Proposition {
+  readonly text: string;
+}
+
+export interface PropositionExtractor {
+  extract(source: string): Promise<readonly Proposition[]>;
+}
+
+export interface ExtractPropositionsInput {
+  readonly source: string;
+}
+
+export async function extractPropositions(
+  input: ExtractPropositionsInput,
+  dependencies: { readonly extractor: PropositionExtractor }
+): Promise<readonly Proposition[]> {
+  return dependencies.extractor.extract(input.source);
+}
+```
+
+### Composition Root Pattern
+
+Each capability wires concrete implementations outside application, usually in `api/composition.ts`. This boundary may import private infrastructure files; the portable public root must not reexport the effectful composition.
+
+```typescript
+// modules/auth/api/composition.ts
 import { PrismaClient } from '@prisma/client';
 import { Resend } from 'resend';
-import { RegisterUserUseCase } from './application';
-import { PrismaUserRepository, ResendEmailService } from './infrastructure';
-import { BCryptPasswordHasher } from './infrastructure/services/bcrypt-password-hasher';
+import { RegisterUserUseCase } from '../application/use-cases/register-user/register-user-use-case';
+import { PrismaUserRepository } from '../infrastructure/repositories/prisma-user-repository';
+import { ResendEmailService } from '../infrastructure/services/resend-email-service';
+import { BCryptPasswordHasher } from '../infrastructure/services/bcrypt-password-hasher';
 
 export function createAuthCompositionRoot(config: {
   prisma: PrismaClient;
@@ -619,7 +594,7 @@ export function createAuthCompositionRoot(config: {
 
   const loginUseCase = new LoginUseCase(userRepo, passwordHasher);
 
-  // Return use cases (public API)
+  // Return the composed operations to the server transport
   return {
     registerUser: registerUserUseCase,
     login: loginUseCase,
@@ -628,17 +603,20 @@ export function createAuthCompositionRoot(config: {
 
 // Usage in Next.js API route
 // app/api/auth/register/route.ts
-import { createAuthCompositionRoot } from '@/features/auth/composition-root';
-import { prisma } from '@/lib/prisma';
+import { createAuthCompositionRoot } from '@/modules/auth/api/composition';
+import { RegisterRequestSchema } from '@/modules/auth/api/register-request';
+import { prisma } from '@/infrastructure/prisma';
+import { env } from '@/config/env';
 
 export async function POST(request: Request) {
   const auth = createAuthCompositionRoot({
     prisma,
-    resendApiKey: process.env.RESEND_API_KEY!,
+    resendApiKey: env.RESEND_API_KEY,
   });
 
   const body = await request.json();
-  const result = await auth.registerUser.execute(body);
+  const input = RegisterRequestSchema.parse(body);
+  const result = await auth.registerUser.execute(input);
 
   return Response.json(result);
 }
@@ -647,7 +625,7 @@ export async function POST(request: Request) {
 ### Test Composition Root
 
 ```typescript
-// features/auth/composition-root.test.ts
+// modules/auth/api/composition.test.ts
 export function createTestAuthCompositionRoot() {
   // Test doubles
   const userRepo = new InMemoryUserRepository();
@@ -690,7 +668,7 @@ export function createTestAuthCompositionRoot() {
 
 **Use `interface` for:**
 - Contracts (repository interfaces, service interfaces)
-- Object shapes that might be extended
+- Readonly records and object shapes that callers may extend
 - Public APIs
 
 **Use `type` for:**
@@ -716,7 +694,7 @@ export type EnrichedUser = User & { profile: UserProfile };
 
 **Use `class` for:**
 - Entities with behavior (domain objects)
-- Use-cases (application services)
+- Use cases when an instance improves explicit composition; otherwise use an injected function
 - Value objects with validation
 
 **Use `interface` for:**
@@ -729,11 +707,11 @@ export type EnrichedUser = User & { profile: UserProfile };
 export class User {
   constructor(
     public readonly id: UserId,
-    private status: UserStatus
+    private readonly status: UserStatus
   ) {}
 
-  activate(): void {
-    this.status = 'active';
+  activate(): User {
+    return new User(this.id, 'active');
   }
 
   isActive(): boolean {
@@ -748,29 +726,29 @@ export interface UserRepository {
 
 // ✅ Interface for DTO
 export interface RegisterUserInput {
-  email: string;
-  password: string;
+  readonly email: string;
+  readonly password: string;
 }
 ```
 
 ### Type-Only Files
 
-**Keep types in separate `types.ts` files for clarity.**
+Keep behavior-free records in `domain/types.ts` or focused `contracts.ts` files. Colocate a small operation type when that improves ownership. Classes and value objects need behavior or invariant enforcement to justify an instance; authors need not wrap every record in a class.
 
 ```typescript
-// features/auth/application/use-cases/register-user/types.ts
+// modules/auth/application/use-cases/register-user/types.ts
 export interface RegisterUserInput {
-  email: string;
-  password: string;
-  name: string;
+  readonly email: string;
+  readonly password: string;
+  readonly name: string;
 }
 
 export interface RegisterUserOutput {
-  userId: string;
-  success: boolean;
+  readonly userId: string;
+  readonly success: true;
 }
 
-// features/auth/application/use-cases/register-user/register-user-use-case.ts
+// modules/auth/application/use-cases/register-user/register-user-use-case.ts
 import { RegisterUserInput, RegisterUserOutput } from './types';
 
 export class RegisterUserUseCase {
@@ -779,12 +757,14 @@ export class RegisterUserUseCase {
   }
 }
 
-// features/auth/application/use-cases/register-user/index.ts
+// modules/auth/application/use-cases/register-user/index.ts
 export { RegisterUserUseCase } from './register-user-use-case';
 export type { RegisterUserInput, RegisterUserOutput } from './types';
 ```
 
-### Zod Validation
+### Boundary Validation
+
+Validate unknown input and provider output before use. A type assertion does not validate data. Zod works well when a consumer needs runtime schemas; a small explicit decoder also works when its owner already defines that closed format. Keep AI SDK, ORM and framework types outside portable operation interfaces.
 
 **Use Zod for:**
 - Runtime validation at boundaries (API routes, form inputs)
@@ -792,7 +772,7 @@ export type { RegisterUserInput, RegisterUserOutput } from './types';
 - External data validation (API responses)
 
 **Location:**
-- Domain validation schemas → `domain/schemas/`
+- Domain validation schemas → `domain/schemas/` when they express domain meaning
 - Boundary validation → co-located with handler/component
 
 ```typescript
@@ -817,18 +797,19 @@ export class Email {
   }
 }
 
-// app/api/auth/register/route.ts
+// modules/auth/api/register-request.ts
 import { z } from 'zod';
 
-const RegisterRequestSchema = z.object({
+export const RegisterRequestSchema = z.object({
   email: z.string().email(),
   password: z.string().min(8),
   name: z.string().min(1),
 });
 
+// app/api/auth/register/route.ts (auth comes from server composition)
 export async function POST(request: Request) {
   const body = await request.json();
-  const validated = RegisterRequestSchema.parse(body); // Throws if invalid
+  const validated = RegisterRequestSchema.parse(body); // The transport maps validation failure to 400
 
   const result = await auth.registerUser.execute(validated);
   return Response.json(result);
@@ -878,7 +859,7 @@ function parseJson<T>(json: string, schema: z.ZodType<T>): T {
 
 ## Testing Strategy
 
-### Testing Pyramid
+### Consequence-Proportional Proof
 
 ```
         ┌─────────────┐
@@ -892,14 +873,16 @@ function parseJson<T>(json: string, schema: z.ZodType<T>): T {
         └─────────────┘
 ```
 
+Treat the illustrated 70/25/5 ratios and unit timing as goals, not quotas or universal deadlines. Select proof from the consequence and owning boundary. Import actual implementations; tests that copy schema, retry or mapping logic cannot prove the production adapter. Independently authored expectations must check the intended user result.
+
 **For most business behavior, the main unit of test is the use-case.** Entities and value objects get focused tests around invariants and validation. Use-cases are where you verify complete workflows and business logic.
 
 ### Test Organization
 
-**Co-locate tests within architectural layers:**
+Place tests at the boundary they prove. Colocation helps small owned units; a repository-level suite may own cross-module, installed-package or browser behavior. The following layout illustrates colocation, not a universal requirement:
 
 ```
-features/auth/
+modules/auth/
 ├── domain/
 │   ├── entities/
 │   │   ├── user.ts
@@ -947,7 +930,8 @@ describe('RegisterUserUseCase', () => {
   it('should register a new user', async () => {
     const userRepo = new InMemoryUserRepository(); // ✅ Fake
     const emailService = new FakeEmailService(); // ✅ Fake
-    const useCase = new RegisterUserUseCase(userRepo, emailService);
+    const passwordHasher = new FakePasswordHasher();
+    const useCase = new RegisterUserUseCase(userRepo, emailService, passwordHasher);
 
     const result = await useCase.execute({
       email: 'test@example.com',
@@ -979,10 +963,10 @@ describe('RegisterUserUseCase', () => {
 
 ### Unit Test Principles
 
-1. **Fast**: <50ms per test
+1. **Fast**: Aim for <50 ms for a small unit; investigate feedback cost instead of imposing a universal deadline
 2. **Isolated**: No database, no network, no filesystem
 3. **Pure**: Test domain logic with pure functions and test doubles
-4. **Focused**: One assertion per test (generally)
+4. **Focused**: Assert one cohesive behavior with as many independent assertions as that behavior needs
 
 ```typescript
 // domain/entities/user.test.ts
@@ -1019,7 +1003,9 @@ describe('User', () => {
 
 ### Integration Test Principles
 
-**Test real integrations: databases, APIs, file systems**
+Test real adapters at database, API and filesystem boundaries in owned isolated fixtures. Inject deterministic transports for offline provider tests. A fake use case alone cannot prove a production adapter or provider quality.
+
+Package acceptance imports or executes the actual installed archive from outside the workspace, checks public/runtime exports, and exercises a real source consumer. Workspace links and tests of copied implementation logic do not prove distribution. Use independently known expectations for successful results and consequential failures.
 
 ```typescript
 // infrastructure/repositories/prisma-user-repository.integration.test.ts
@@ -1065,7 +1051,7 @@ describe('PrismaUserRepository (integration)', () => {
 
 ### Custom Domain Errors
 
-**Define custom error classes in domain layer.**
+Domain may define invariant errors; application owns workflow failure contracts. Return typed expected failures when callers must branch on them. Reserve exceptions for unexpected failures or a deliberate local convention. The following legacy-style registration examples illustrate the exception convention; adapters must map and redact those errors before transport.
 
 ```typescript
 // domain/errors/user-errors.ts
@@ -1078,7 +1064,7 @@ export class UserError extends Error {
 
 export class InvalidEmailError extends UserError {
   constructor(email: string) {
-    super(`Invalid email: ${email}`);
+    super('Invalid email');
     this.name = 'InvalidEmailError';
   }
 }
@@ -1092,7 +1078,7 @@ export class UserNotFoundError extends UserError {
 
 export class UserAlreadyExistsError extends UserError {
   constructor(email: Email) {
-    super(`User already exists with email: ${email.value}`);
+    super('User already exists');
     this.name = 'UserAlreadyExistsError';
   }
 }
@@ -1100,7 +1086,7 @@ export class UserAlreadyExistsError extends UserError {
 
 ### Error Propagation: Push Upward
 
-**Domain/use-cases throw errors. Infrastructure handles them.**
+Use cases return expected outcomes or throw under their declared convention; infrastructure maps them to transport status and safe messages. Core code must not catch a failure merely to hide it. Provider-backed operation contracts distinguish cancellation, timeout, invalid input, authentication, rate limit, malformed output and unavailability. Authors need no universal Result package.
 
 ```typescript
 // ✅ CORRECT: Use-case throws domain errors
@@ -1124,21 +1110,36 @@ export class RegisterUserUseCase {
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const result = await auth.registerUser.execute(body);
+    const input = RegisterRequestSchema.parse(body);
+    const result = await auth.registerUser.execute(input);
     return Response.json(result);
   } catch (error) {
     if (error instanceof UserAlreadyExistsError) {
-      return Response.json({ error: error.message }, { status: 409 });
+      return Response.json({ error: 'User already exists' }, { status: 409 });
     }
     if (error instanceof InvalidEmailError) {
-      return Response.json({ error: error.message }, { status: 400 });
+      return Response.json({ error: 'Invalid input' }, { status: 400 });
     }
     // Unknown error
-    console.error('Unexpected error:', error);
+    errorReporter.report({ operation: 'registerUser', code: 'unexpected' });
     return Response.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
 ```
+
+### Typed Expected Outcomes
+
+```typescript
+export type GenerationFailure =
+  | 'cancelled' | 'timeout' | 'invalid-input' | 'authentication'
+  | 'rate-limit' | 'malformed-output' | 'unavailable';
+
+export type GenerationResult<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false; readonly code: GenerationFailure };
+```
+
+An adapter translates provider errors into these operation-owned outcomes. It keeps credentials, raw provider payloads and source text out of public errors and logs. A caller can distinguish cancellation from timeout without inspecting a vendor exception.
 
 ### No Swallowing Errors in Core Logic
 
@@ -1169,7 +1170,7 @@ export class RegisterUserUseCase {
 
 ### Logging Strategy
 
-**Logging is a side effect → belongs in infrastructure.**
+Logging adapters own side effects. An application may consume an injected `ErrorReporter` interface, while composition owns its sink, credentials and redaction policy. Never log raw provider errors, credentials or private source text.
 
 ```typescript
 // ❌ WRONG: Logging in domain
@@ -1183,11 +1184,12 @@ export class User {
 // ✅ CORRECT: Logging in infrastructure
 export async function POST(request: Request) {
   try {
-    const result = await auth.registerUser.execute(body);
+    const input = RegisterRequestSchema.parse(body);
+    const result = await auth.registerUser.execute(input);
     console.log('User registered:', result.userId); // ✅ Log in infrastructure
     return Response.json(result);
   } catch (error) {
-    console.error('Registration failed:', error); // ✅ Log in infrastructure
+    errorReporter.report({ operation: 'registerUser', code: 'unexpected' });
     throw error;
   }
 }
@@ -1223,7 +1225,7 @@ export function applyDiscount(order: Order, tier: UserTier): void {
 
 ### Immutability
 
-**Use `const`, spread operators, no mutations.**
+Keep core inputs and shared state immutable. Use `const`, readonly records and copy-on-write updates. An entity may expose an explicit transition, but a pure transition returns a new value. Adapters and owned state containers may mutate their own state; they must not mutate caller-owned data. Inject time and IDs where rules depend on them.
 
 ```typescript
 // ✅ CORRECT: Immutable updates
@@ -1257,7 +1259,7 @@ export class User {
 // ✅ CORRECT: Declarative
 const activeUsers = users.filter(user => user.isActive());
 const userNames = activeUsers.map(user => user.name);
-const sortedNames = userNames.sort();
+const sortedNames = [...userNames].sort();
 
 // ❌ WRONG: Imperative
 const activeUsers = [];
@@ -1360,49 +1362,43 @@ export class User {
 
 ### UI Layer Organization
 
-```
-src/
-├── ui/
-│   ├── components/
-│   │   ├── auth/
-│   │   │   ├── login-form.tsx
-│   │   │   ├── register-form.tsx
-│   │   │   └── index.ts
-│   │   ├── shared/
-│   │   │   ├── button.tsx
-│   │   │   ├── input.tsx
-│   │   │   └── index.ts
-│   │   └── index.ts
-│   ├── hooks/
-│   │   ├── use-auth.ts
-│   │   ├── use-form.ts
-│   │   └── index.ts
-│   └── index.ts
+Capability-local `components/` and `hooks/` keep UI beside its owner. A `presentation.ts` public entry exposes React-only exports; `shared/ui/` owns common primitives. The module's portable `index.ts` never reexports React or server wiring.
+
+```text
+src/modules/auth/
+├── index.ts                  # Portable operations and DTO types
+├── presentation.ts           # RegisterForm and UI controller exports
+├── components/register-form.tsx
+├── hooks/use-registration.ts
+└── api/composition.ts        # Server wiring; never import in browser code
 ```
 
 ### API Routes Must Call Use-Cases
 
-**API routes are thin handlers that delegate to use-cases.**
+API routes decode input, invoke composed operations and map outcomes. They keep workflow rules out of the handler. The snippets below assume that composition provides `auth`, configuration validation provides `env`, and the transport owns `RegisterRequestSchema`; these excerpts illustrate boundaries rather than a complete application.
 
 ```typescript
 // ✅ CORRECT: Route calls use-case
 // app/api/auth/register/route.ts
-import { createAuthCompositionRoot } from '@/features/auth/composition-root';
-import { prisma } from '@/lib/prisma';
+import { createAuthCompositionRoot } from '@/modules/auth/api/composition';
+import { RegisterRequestSchema } from '@/modules/auth/api/register-request';
+import { prisma } from '@/infrastructure/prisma';
+import { env } from '@/config/env';
 
 export async function POST(request: Request) {
   const auth = createAuthCompositionRoot({
     prisma,
-    resendApiKey: process.env.RESEND_API_KEY!,
+    resendApiKey: env.RESEND_API_KEY,
   });
 
   try {
     const body = await request.json();
-    const result = await auth.registerUser.execute(body); // ✅ Calls use-case
+    const input = RegisterRequestSchema.parse(body);
+    const result = await auth.registerUser.execute(input); // ✅ Calls use-case
     return Response.json(result);
   } catch (error) {
     if (error instanceof UserAlreadyExistsError) {
-      return Response.json({ error: error.message }, { status: 409 });
+      return Response.json({ error: 'User already exists' }, { status: 409 });
     }
     throw error;
   }
@@ -1412,7 +1408,7 @@ export async function POST(request: Request) {
 ```typescript
 // ❌ WRONG: Route has business logic
 // app/api/auth/register/route.ts
-import { prisma } from '@/lib/prisma';
+import { prisma } from '@/infrastructure/prisma';
 import bcrypt from 'bcrypt';
 
 export async function POST(request: Request) {
@@ -1447,21 +1443,24 @@ export async function POST(request: Request) {
 // app/actions/auth-actions.ts
 'use server';
 
-import { createAuthCompositionRoot } from '@/features/auth/composition-root';
-import { prisma } from '@/lib/prisma';
+import { createAuthCompositionRoot } from '@/modules/auth/api/composition';
+import { RegisterRequestSchema } from '@/modules/auth/api/register-request';
+import { prisma } from '@/infrastructure/prisma';
+import { env } from '@/config/env';
 
 export async function registerUserAction(formData: FormData) {
   const auth = createAuthCompositionRoot({
     prisma,
-    resendApiKey: process.env.RESEND_API_KEY!,
+    resendApiKey: env.RESEND_API_KEY,
   });
 
   try {
-    const result = await auth.registerUser.execute({
-      email: formData.get('email') as string,
-      password: formData.get('password') as string,
-      name: formData.get('name') as string,
+    const input = RegisterRequestSchema.parse({
+      email: formData.get('email'),
+      password: formData.get('password'),
+      name: formData.get('name'),
     });
+    const result = await auth.registerUser.execute(input);
 
     return { success: true, userId: result.userId };
   } catch (error) {
@@ -1475,14 +1474,14 @@ export async function registerUserAction(formData: FormData) {
 
 ### React Components Are UI Layer
 
-**Components should NOT import domain entities or use-cases directly.**
+Presentation leaves render finished view models and emit intents. Hooks/controllers coordinate UI state and consume composed operation interfaces. Browser-local operations may run through browser composition; server-only operations cross a transport adapter. UI may share safe DTO types, but components must not construct repositories or acquire concrete infrastructure.
 
 ```typescript
 // ✅ CORRECT: Component uses server action (infrastructure)
 'use client';
 
 import { registerUserAction } from '@/app/actions/auth-actions';
-import { Button, Input } from '@/ui/components/shared';
+import { Button, Input } from '@/shared/ui';
 
 export function RegisterForm() {
   async function handleSubmit(formData: FormData) {
@@ -1507,10 +1506,10 @@ export function RegisterForm() {
 ```
 
 ```typescript
-// ❌ WRONG: Component imports use-case directly
+// ❌ WRONG: Component constructs a use case and acquires dependencies
 'use client';
 
-import { RegisterUserUseCase } from '@/features/auth/application'; // ❌
+import { RegisterUserUseCase } from '@/modules/auth'; // ❌
 
 export function RegisterForm() {
   const registerUseCase = new RegisterUserUseCase(/* ... */); // ❌
@@ -1521,16 +1520,42 @@ export function RegisterForm() {
 }
 ```
 
+### Controller and Presentation Leaf
+
+A browser controller may consume an already composed operation. The leaf receives only finished state and an intent callback; neither constructs a repository.
+
+```tsx
+interface RegistrationViewModel {
+  readonly canSubmit: boolean;
+  readonly message: string;
+}
+
+interface RegisterButtonProps {
+  readonly view: RegistrationViewModel;
+  readonly onRegister: () => void;
+}
+
+export function RegisterButton({ view, onRegister }: RegisterButtonProps) {
+  return (
+    <button disabled={!view.canSubmit} onClick={onRegister}>
+      {view.message}
+    </button>
+  );
+}
+```
+
+The owning hook/controller maps operation outcomes into `RegistrationViewModel` and passes `onRegister`. A server-only operation crosses the server-action or HTTP adapter; browser-local composition may supply a local operation without that transport.
+
 ### State Management
 
-**For global state: Custom hooks or Zustand when significantly complex.**
+Choose hooks or a state store such as Zustand from UI complexity. Keep persistent authority in the application/repository; a client store mirrors state rather than owning a second persistence truth. No product must adopt Zustand or a common persistence backend merely to follow this guide.
 
 ```typescript
-// ui/hooks/use-auth.ts
+// modules/auth/hooks/use-auth.ts
 import { create } from 'zustand';
 
 interface AuthState {
-  user: User | null;
+  user: UserViewModel | null;
   isAuthenticated: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => void;
@@ -1552,7 +1577,7 @@ export const useAuth = create<AuthState>((set) => ({
 }));
 
 // Usage in component
-import { useAuth } from '@/ui/hooks';
+import { useAuth } from '@/modules/auth/presentation';
 
 export function UserMenu() {
   const { user, logout } = useAuth();
@@ -1566,30 +1591,35 @@ export function UserMenu() {
 }
 ```
 
-### Barrel Exports for Clean Imports
+### Public and Runtime Entry Points
+
+Cross-module callers use declared public APIs. Internal owners may use relative imports without creating a barrel for every directory.
 
 ```typescript
-// ✅ CORRECT: Import from barrel exports
-import { useUserData } from '@/ui/hooks';
-import { Button, Card } from '@/ui/components/shared';
-import { LoginForm } from '@/ui/components/auth';
-import { RegisterUserUseCase } from '@/features/auth/application';
+// Portable contracts: no React, database or provider acquisition at the root.
+import type { RegisterUserInput } from '@/modules/auth';
+// UI-only exports.
+import { RegisterForm } from '@/modules/auth/presentation';
+// Explicit server composition, only from server transport.
+import { createAuthCompositionRoot } from '@/modules/auth/api/composition';
+import { RegisterRequestSchema } from '@/modules/auth/api/register-request';
+// A package may expose a reviewed Node-only adapter subpath.
+import { createFileSnapshotReader } from '@twelveapart/arch-check/node';
 
-// ❌ WRONG: Import from deep paths
-import { useUserData } from '@/ui/hooks/use-user-data';
-import { Button } from '@/ui/components/shared/button';
-import { LoginForm } from '@/ui/components/auth/login-form';
-import { RegisterUserUseCase } from '@/features/auth/application/use-cases/register-user/register-user-use-case';
+// Inside the auth owner, private relative imports remain legitimate.
+import { Email } from '../domain/value-objects/email';
 ```
 
-**Exception: Relative imports within same directory are allowed.**
+### Other Platform Mappings
 
-```typescript
-// Within features/auth/domain/entities/
-// user.ts
-import { Email, UserId } from '../value-objects'; // ✅ Relative import OK
-import { UserStatus } from './user-status'; // ✅ Same directory OK
-```
+| Platform | Outer boundary | Shared inner contract |
+|----------|----------------|-----------------------|
+| Next.js | Routes, server actions and React controllers | Named operations and DTOs |
+| TanStack Start | Server functions, routes and React controllers | The same operation/interface conventions |
+| Bun/Node CLI | Argument decoder, command handler and composition | Workflow and repository snapshot interfaces |
+| Browser-local capability | Hook/controller and browser composition | Runtime-neutral rules and explicit operations |
+
+Keep each package's runtime requirement explicit. Bun workspaces and tooling do not imply that every native dependency or product runtime supports Bun. Products keep framework, database and deployment choices that serve their actual lifecycle.
 
 ---
 
@@ -1598,7 +1628,7 @@ import { UserStatus } from './user-status'; // ✅ Same directory OK
 ### Repository Pattern
 
 ```typescript
-// Domain interface
+// Application-owned workflow IO interface
 export interface UserRepository {
   findById(id: UserId): Promise<User | null>;
   findByEmail(email: Email): Promise<User | null>;
@@ -1653,7 +1683,9 @@ export class InMemoryUserRepository implements UserRepository {
 ```typescript
 // infrastructure/mappers/user-mapper.ts
 import { User as PrismaUser } from '@prisma/client';
-import { User, UserId, Email } from '@/features/auth/domain';
+import { User } from '../../domain/entities/user';
+import { UserId } from '../../domain/value-objects/user-id';
+import { Email } from '../../domain/value-objects/email';
 
 export class UserMapper {
   static toDomain(raw: PrismaUser): User {
@@ -1662,9 +1694,9 @@ export class UserMapper {
       email: Email.create(raw.email),
       profile: UserProfile.create({
         name: raw.name,
-        tier: raw.tier as UserTier,
+        tier: UserTierSchema.parse(raw.tier),
       }),
-      status: raw.status as UserStatus,
+      status: UserStatusSchema.parse(raw.status),
       createdAt: raw.createdAt,
       updatedAt: raw.updatedAt,
     });
@@ -1687,7 +1719,7 @@ export class UserMapper {
 ### Use Case Pattern
 
 ```typescript
-// Consistent structure for all use-cases
+// Class form; functions follow the same operation contract and ownership rules
 export interface <Verb><Noun>Input {
   // Input fields
 }
@@ -1720,10 +1752,11 @@ export class Email {
   private constructor(public readonly value: string) {}
 
   static create(value: string): Email {
-    if (!this.isValid(value)) {
+    const normalized = value.trim().toLowerCase();
+    if (!this.isValid(normalized)) {
       throw new InvalidEmailError(value);
     }
-    return new Email(value.toLowerCase().trim());
+    return new Email(normalized);
   }
 
   private static isValid(value: string): boolean {
@@ -1739,392 +1772,270 @@ export class Email {
 
 ### Entity Pattern
 
+A pure transition returns a new entity. Composition supplies time and IDs; restoration uses persisted values rather than reading the clock again.
+
 ```typescript
+export type UserStatus = 'active' | 'suspended';
+
+export interface CreateUserProps {
+  readonly id: UserId;
+  readonly email: Email;
+  readonly status: UserStatus;
+  readonly createdAt: Date;
+  readonly updatedAt: Date;
+}
+
 export class User {
-  private constructor(
-    public readonly id: UserId,
-    public readonly email: Email,
-    private status: UserStatus,
-    public readonly createdAt: Date,
-    private updatedAt: Date
-  ) {}
+  private constructor(private readonly props: CreateUserProps) {}
 
   static create(props: CreateUserProps): User {
-    // Validate invariants
-    return new User(
-      props.id,
-      props.email,
-      props.status || UserStatus.active(),
-      new Date(),
-      new Date()
-    );
-  }
-
-  // Business logic methods
-  activate(): void {
-    if (this.status === UserStatus.active()) {
-      throw new UserAlreadyActiveError(this.id);
+    if (props.updatedAt.getTime() < props.createdAt.getTime()) {
+      throw new Error('Update time precedes creation time');
     }
-    this.status = UserStatus.active();
-    this.touch();
+    // Copy caller-owned dates; readonly alone cannot freeze a Date instance.
+    return new User({
+      ...props,
+      createdAt: new Date(props.createdAt.getTime()),
+      updatedAt: new Date(props.updatedAt.getTime()),
+    });
   }
 
-  suspend(): void {
-    this.status = UserStatus.suspended();
-    this.touch();
+  activate(now: Date): User {
+    return User.create({ ...this.props, status: 'active', updatedAt: now });
   }
 
-  private touch(): void {
-    this.updatedAt = new Date();
+  suspend(now: Date): User {
+    return User.create({ ...this.props, status: 'suspended', updatedAt: now });
   }
 }
 ```
 
 ### Transaction Pattern
 
-**Transactions handled in use-cases, mechanism provided by repositories.**
+A use case defines the atomic boundary. An application-owned interface exposes only the persistence operations that boundary needs; the adapter owns the database mechanism. Do not cast a transaction client into a full client or imply atomicity across independent repositories. Keep email/provider effects outside retryable database callbacks; use a product-owned outbox when delivery must survive a process failure.
 
 ```typescript
-// Domain interface defines transaction capability
-export interface UserRepository {
-  // ... other methods
-  transaction<T>(work: (repo: UserRepository) => Promise<T>): Promise<T>;
+// application/credit-transfer.ts
+export interface CreditAccounts {
+  findById(id: string): Promise<CreditAccount | null>;
+  save(account: CreditAccount): Promise<void>;
 }
 
-// Prisma implementation provides mechanism
-export class PrismaUserRepository implements UserRepository {
-  async transaction<T>(work: (repo: UserRepository) => Promise<T>): Promise<T> {
+export interface CreditTransaction {
+  withAccounts<T>(work: (accounts: CreditAccounts) => Promise<T>): Promise<T>;
+}
+
+export async function transferCredits(
+  input: TransferCreditsInput,
+  transaction: CreditTransaction
+): Promise<void> {
+  await transaction.withAccounts(async (accounts) => {
+    const sender = await accounts.findById(input.senderId);
+    const receiver = await accounts.findById(input.receiverId);
+    if (!sender || !receiver) throw new Error('Account not found');
+    // Product rules reject invalid amounts and self-transfers, then return new values.
+    const transfer = calculateCreditTransfer(sender, receiver, input.amount);
+    await accounts.save(transfer.sender);
+    await accounts.save(transfer.receiver);
+  });
+}
+
+// infrastructure/prisma-credit-transaction.ts
+import type { Prisma, PrismaClient } from '@prisma/client';
+
+type CreditStore = Pick<Prisma.TransactionClient, 'creditAccount'>;
+
+export class PrismaCreditTransaction implements CreditTransaction {
+  constructor(private readonly prisma: PrismaClient) {}
+
+  async withAccounts<T>(work: (accounts: CreditAccounts) => Promise<T>): Promise<T> {
     return this.prisma.$transaction(async (tx) => {
-      const txRepo = new PrismaUserRepository(tx as PrismaClient);
-      return work(txRepo);
-    });
-  }
-}
-
-// Use-case orchestrates transaction
-export class TransferCreditsUseCase {
-  constructor(private userRepo: UserRepository) {}
-
-  async execute(input: TransferCreditsInput): Promise<TransferCreditsOutput> {
-    return this.userRepo.transaction(async (repo) => {
-      const sender = await repo.findById(input.senderId);
-      const receiver = await repo.findById(input.receiverId);
-
-      if (!sender || !receiver) {
-        throw new UserNotFoundError();
-      }
-
-      sender.deductCredits(input.amount);
-      receiver.addCredits(input.amount);
-
-      await repo.save(sender);
-      await repo.save(receiver);
-
-      return { success: true };
-    });
+      // The adapter accepts only the delegate it needs, not a full PrismaClient.
+      const store: CreditStore = tx;
+      return work(createPrismaCreditAccounts(store));
+    }, { isolationLevel: 'Serializable' });
   }
 }
 ```
+
+The adapter maps records and preserves the product's isolation/conflict policy. If it retries a serialization conflict, it retries the whole callback with a bounded policy. The callback must not send an email or make a provider request.
 
 ---
 
 ## Migration Strategies
 
-### From Messy Codebase to Clean Architecture
+### Deliver Thin Complete User Journeys
 
-**Incremental approach - don't rewrite everything at once.**
+Migrate one useful operation through all its affected in-product callers. Do not convert the whole codebase horizontally before users receive a working journey.
 
-#### Phase 1: Extract Domain Logic
+1. Characterize the real operation and saved-data behavior with independently known expectations.
+2. Extract pure rules and name the application operation; place IO interfaces in the consuming inner layer.
+3. Implement adapters around existing persistence/provider behavior and wire them in composition.
+4. Switch every affected route, browser/CLI controller and in-product caller of that responsibility together.
+5. Run affected boundary proof, preserve saved data through any necessary migration, then delete the superseded path.
 
-1. Identify business rules scattered across codebase
-2. Create domain entities and value objects
-3. Move business logic into entity methods
-4. Keep existing infrastructure as-is
+An intermediate local refactor may leave work incomplete; do not present a route with temporary direct database orchestration as the delivered clean-architecture outcome. Compatibility needs an explicit version or data requirement, not an automatic parallel implementation.
 
-**Example:**
-```typescript
-// Before: Business logic in API route
-export async function POST(request: Request) {
-  const body = await request.json();
+### New Capabilities
 
-  // ❌ Business logic here
-  if (!body.email.includes('@')) {
-    return Response.json({ error: 'Invalid email' });
-  }
+Start new work with the smallest needed module shape. A pure capability may need only `domain/` and `index.ts`; a persistence-backed workflow adds application interfaces, adapters and `api/composition.ts`. Add a README and explicit public surface; avoid empty mandatory folders.
 
-  const user = await prisma.user.create({ data: body });
-  return Response.json(user);
-}
+### Adoption Across Independent Products
 
-// After: Extract to domain
-export async function POST(request: Request) {
-  const body = await request.json();
+Extract from a real source consumer and switch that source to the released exact version in the same effort. A detached demonstration does not complete extraction. Other products adopt when their owners next touch the area, through a tracking issue with parity proof. Teams keep exact old versions until that migration and never force an inactive product to adopt. Teams remove duplicate implementations of the migrated responsibility within each adopting product while preserving saved data.
 
-  try {
-    const email = Email.create(body.email); // ✅ Domain validation
-    // ... still using prisma directly, but domain logic extracted
-  } catch (error) {
-    return Response.json({ error: error.message });
-  }
-}
-```
+---
 
-#### Phase 2: Introduce Repository Interfaces
+## Shared Capabilities & Governance
 
-1. Define repository interfaces in domain
-2. Create adapters for existing data access
-3. Gradually replace direct DB calls with repository calls
+### Reference Stack and Package Boundaries
 
-#### Phase 3: Extract Use Cases
+TwelveApart recommends strict TypeScript, ESM, readonly records, explicit operation contracts, boundary validation and consequence-proportional proof. React products may keep Next.js or TanStack Start; developer commands may keep Bun/Node composition. Products own persistence, configuration, credentials and deployment. Framework uniformity does not define architectural consistency.
 
-1. Identify operations (user registration, order creation, etc.)
-2. Create use-case classes
-3. Move orchestration logic into use-cases
-4. Update routes to call use-cases
+Share a stable operation contract and the smallest useful implementation with a real source consumer. Put portable contracts and operations in the package root; put provider/runtime adapters in explicit subpaths. Evaluate reuse against a second project's actual semantics: common filenames or dependencies alone do not justify a package. Every plan and review asks, “Could another project use this?” When the answer warrants extraction, the owner files an issue in the appropriate TwelveApart repository rather than copying a private utility indefinitely.
 
-#### Phase 4: Complete Clean Architecture
+The shared repository uses Bun workspaces, shared CI and Changesets. The release owner records per-package tags and changelogs, publishes immutable private `@twelveapart/*` releases to GitHub Packages, and verifies Bun/pnpm installation in the first delivery. Products pin exact versions and lockfiles. Owners need explicit approval before any public publication; a guide update does not authorize one. Teams prefer direct upstream libraries to repackaging registry UI or one-line helpers.
 
-1. Organize into feature folders
-2. Add test doubles
-3. Complete dependency inversion
-4. Full separation of concerns
+### Executable Repository Policy
 
-### Adding Clean Architecture to New Features
+Checkers separate reusable syntax analysis, snapshot acquisition and stable rule IDs from per-repository dependency maps, documentation standards, numerical limits and measured exceptions. Parse syntax rather than treating import-looking strings/comments as dependencies. Normalize paths at acquisition; keep Node-specific helpers out of a portable evaluator. Owners preserve useful negative fixtures and real installed-command proof during extraction.
 
-**Start clean from day one on new features.**
+Documentation enforcement may cover full file purpose and exported contracts, beyond a useful-header check. Owners coordinate existing enforcement instead of installing a weaker duplicate. Documentation shape cannot prove truth; reviewers check whether the actual implementation supports the claims. Repository maintainers configure policy openly and shrink measured exceptions rather than recapturing debt to hide a violation.
 
-```typescript
-// New feature: Billing
-// 1. Create feature folder
-features/billing/
-├── domain/
-│   ├── entities/
-│   │   └── invoice.ts
-│   ├── repositories/
-│   │   └── invoice-repository.ts
-│   └── index.ts
-├── application/
-│   └── use-cases/
-│       └── create-invoice/
-│           ├── create-invoice-use-case.ts
-│           ├── types.ts
-│           └── index.ts
-├── infrastructure/
-│   └── repositories/
-│       └── prisma-invoice-repository.ts
-├── composition-root.ts
-└── index.ts
+### Guide Evolution Versus Repository Drift
 
-// 2. Build feature with clean architecture
-// 3. Integrate with existing (messy) codebase via composition root
-// 4. Gradually refactor old features to match
-```
+Teams update this guide through a focused reviewed PR when deliberate decisions improve the common architecture. A newer repository does not automatically overrule the guide. Application composition that imports concrete infrastructure contradicts the inward dependency rule: move the composition boundary instead of changing that rule. A regex import reader or Node-bound pure evaluator reflects a portability/parser limitation, not a portable reference design. Provider JSON casts, unbounded calls and hidden environment/singleton acquisition need explicit decoding, cancellation and injected effects during cohesive extraction; teams preserve useful behavior while fixing those gaps.
+
+Teams use one proportionate review and the owning repository's quality gates for each repository change. The user reviews architectural policy changes. Teams standardize developer-agent orchestration on Herdr plus continuity; product workflow engines serve a separate responsibility. Repository owners keep their runtime, data and consent policies explicit rather than hiding them inside a shared package.
 
 ---
 
 ## Summary: Quick Reference Checklist
 
-When coding, verify:
+Authors check the following before delivery.
 
-### ✅ Layer Rules
-- [ ] Domain never imports from application or infrastructure
-- [ ] Application only imports from domain
-- [ ] Infrastructure can import from anywhere
-- [ ] No framework code in domain or application
+### Layer Rules and Injection
 
-### ✅ Dependency Inversion
-- [ ] Interfaces defined in domain
-- [ ] Implementations in infrastructure
-- [ ] Use-cases depend on interfaces, not concretions
-- [ ] Constructor injection used everywhere
+- [ ] Domain owns meanings, invariants and pure rules; application owns workflows.
+- [ ] The consuming inner layer owns each interface, including application IO contracts.
+- [ ] Constructors, parameters or explicit factories inject dependencies; core code never acquires hidden infrastructure.
+- [ ] Framework, transport, persistence and provider types stop at adapters.
+- [ ] Composition wires concrete adapters outside application.
 
-### ✅ Use Cases
-- [ ] Every use-case has `execute()` method
-- [ ] Explicit `Input` and `Output` types
-- [ ] Use-cases contain business workflows and orchestration
-- [ ] Entities/VOs encapsulate invariants and simple behavior
+### Operations and Types
 
-### ✅ Testing
-- [ ] Domain/use-case tests use test doubles, not mocks
-- [ ] Tests co-located with implementation
-- [ ] Fast unit tests (<50ms)
-- [ ] Integration tests for infrastructure
+- [ ] Class `execute` methods or named functions declare inputs, outputs and expected failures.
+- [ ] Capability nouns and precise verbs describe lookup, ordering, overwrite and effect semantics.
+- [ ] Readonly interfaces model records; justified classes enforce behavior or invariants.
+- [ ] Boundary decoders validate unknown input and provider output; casts do not substitute for validation.
+- [ ] Adapters distinguish cancellation, timeout and provider failures and redact private content.
 
-### ✅ Naming & Organization
-- [ ] Feature-based folders
-- [ ] Barrel exports (`index.ts`) everywhere
-- [ ] Descriptive names (no abbreviations)
-- [ ] Consistent file naming patterns
+### Testing and Migration
 
-### ✅ Next.js Integration
-- [ ] Routes/Server Actions call use-cases (not repositories)
-- [ ] Components in `ui/` folder
-- [ ] No business logic in components
-- [ ] State management in custom hooks
+- [ ] Tests import actual implementations and assert independently known results.
+- [ ] Fakes support fast operation tests; actual adapters and installed archives prove their boundaries.
+- [ ] Assertions cover a cohesive behavior; ratios, timing and colocation serve goals rather than universal rules.
+- [ ] The team migrates affected in-product callers together, deletes old paths and preserves saved data.
+- [ ] Extraction includes the real source consumer; other products adopt exact versions on touch.
 
-### ✅ Code Style
-- [ ] Functional programming bias (pure functions)
-- [ ] Immutability (`const`, spread operators)
-- [ ] Declarative over imperative
-- [ ] Principle-based comments
-- [ ] Zero `any` types
+### Naming, Organization and UI
+
+- [ ] Capability modules expose a README and public root, with only the layers they need.
+- [ ] Cross-module callers use public APIs; private relative imports remain legitimate.
+- [ ] Runtime subpaths separate portable operations, React presentation and server/browser composition.
+- [ ] Presentation leaves render view models and emit intents; controllers consume composed operations.
+- [ ] Thin routes, actions and commands decode input and map outcomes; repositories own persistent authority.
+- [ ] Hooks/store choices fit UI complexity; products retain legitimate platform adaptations.
+
+### Core Behavior and Governance
+
+- [ ] Core transitions preserve caller-owned data and receive time/IDs explicitly when rules need them.
+- [ ] Transaction callbacks use narrow capabilities and keep external effects outside retryable work.
+- [ ] Comments explain intent; authors use active voice, name actors and avoid `any`.
+- [ ] The plan/review asks whether another project can reuse the capability and tracks justified extraction.
+- [ ] Checkers separate shared analysis from repository policy; reviewers check documentation truth.
+- [ ] The owner records evolving architectural decisions in this guide through one focused review.
 
 ---
 
 ## Appendix: Example Project Structure
 
-**Complete example for reference:**
+This Next.js adaptation keeps portable operations separate from UI and server wiring. A TanStack or CLI shell substitutes its transport folders without changing the inward dependency rule. The illustration omits files that an actual capability does not need.
 
-```
-my-next-app/
+```text
+my-product/
 ├── src/
-│   ├── features/
+│   ├── modules/
 │   │   ├── auth/
+│   │   │   ├── README.md
+│   │   │   ├── index.ts
+│   │   │   ├── presentation.ts
 │   │   │   ├── domain/
-│   │   │   │   ├── entities/
-│   │   │   │   │   ├── user.ts
-│   │   │   │   │   ├── user.test.ts
-│   │   │   │   │   └── index.ts
-│   │   │   │   ├── value-objects/
-│   │   │   │   │   ├── email.ts
-│   │   │   │   │   ├── email.test.ts
-│   │   │   │   │   ├── user-id.ts
-│   │   │   │   │   └── index.ts
-│   │   │   │   ├── repositories/
-│   │   │   │   │   ├── user-repository.ts
-│   │   │   │   │   └── index.ts
-│   │   │   │   ├── services/
-│   │   │   │   │   ├── email-service.ts
-│   │   │   │   │   ├── password-hasher.ts
-│   │   │   │   │   └── index.ts
-│   │   │   │   ├── errors/
-│   │   │   │   │   ├── user-errors.ts
-│   │   │   │   │   └── index.ts
-│   │   │   │   └── index.ts
+│   │   │   │   ├── entities/user.ts
+│   │   │   │   ├── entities/user.test.ts
+│   │   │   │   ├── value-objects/email.ts
+│   │   │   │   └── errors/user-errors.ts
 │   │   │   ├── application/
-│   │   │   │   ├── use-cases/
-│   │   │   │   │   ├── register-user/
-│   │   │   │   │   │   ├── register-user-use-case.ts
-│   │   │   │   │   │   ├── register-user-use-case.test.ts
-│   │   │   │   │   │   ├── types.ts
-│   │   │   │   │   │   └── index.ts
-│   │   │   │   │   ├── login/
-│   │   │   │   │   │   ├── login-use-case.ts
-│   │   │   │   │   │   ├── login-use-case.test.ts
-│   │   │   │   │   │   ├── types.ts
-│   │   │   │   │   │   └── index.ts
-│   │   │   │   │   └── index.ts
-│   │   │   │   └── index.ts
+│   │   │   │   ├── repositories/user-repository.ts
+│   │   │   │   ├── services/email-service.ts
+│   │   │   │   ├── services/password-hasher.ts
+│   │   │   │   └── use-cases/register-user/
+│   │   │   │       ├── register-user-use-case.ts
+│   │   │   │       ├── register-user-use-case.test.ts
+│   │   │   │       └── contracts.ts
 │   │   │   ├── infrastructure/
-│   │   │   │   ├── repositories/
-│   │   │   │   │   ├── prisma-user-repository.ts
-│   │   │   │   │   ├── prisma-user-repository.integration.test.ts
-│   │   │   │   │   ├── in-memory-user-repository.ts
-│   │   │   │   │   └── index.ts
-│   │   │   │   ├── services/
-│   │   │   │   │   ├── resend-email-service.ts
-│   │   │   │   │   ├── bcrypt-password-hasher.ts
-│   │   │   │   │   ├── fake-email-service.ts
-│   │   │   │   │   └── index.ts
-│   │   │   │   ├── mappers/
-│   │   │   │   │   ├── user-mapper.ts
-│   │   │   │   │   └── index.ts
-│   │   │   │   └── index.ts
-│   │   │   ├── composition-root.ts
-│   │   │   ├── composition-root.test.ts
-│   │   │   └── index.ts
-│   │   │
+│   │   │   │   ├── repositories/prisma-user-repository.ts
+│   │   │   │   ├── repositories/prisma-user-repository.integration.test.ts
+│   │   │   │   ├── services/resend-email-service.ts
+│   │   │   │   └── mappers/user-mapper.ts
+│   │   │   ├── api/composition.ts
+│   │   │   ├── api/composition.test.ts
+│   │   │   ├── components/register-form.tsx
+│   │   │   └── hooks/use-registration.ts
 │   │   └── billing/
-│   │       ├── domain/
-│   │       ├── application/
-│   │   ├── infrastructure/
-│   │       ├── composition-root.ts
-│   │       └── index.ts
-│   │
-│   ├── ui/
-│   │   ├── components/
-│   │   │   ├── auth/
-│   │   │   │   ├── login-form.tsx
-│   │   │   │   ├── register-form.tsx
-│   │   │   │   └── index.ts
-│   │   │   ├── shared/
-│   │   │   │   ├── button.tsx
-│   │   │   │   ├── input.tsx
-│   │   │   │   ├── card.tsx
-│   │   │   │   └── index.ts
-│   │   │   └── index.ts
-│   │   ├── hooks/
-│   │   │   ├── use-auth.ts
-│   │   │   ├── use-form.ts
-│   │   │   └── index.ts
-│   │   └── index.ts
-│   │
-│   ├── core/
-│   │   ├── errors/
-│   │   │   ├── base-error.ts
-│   │   │   ├── domain-error.ts
-│   │   │   └── index.ts
-│   │   ├── types/
-│   │   │   ├── common.ts
-│   │   │   └── index.ts
-│   │   └── utils/
-│   │       ├── date.ts
-│   │       ├── string.ts
-│   │       └── index.ts
-│   │
-│   └── config/
-│       ├── env.ts
-│       └── constants.ts
-│
-├── app/
-│   ├── (auth)/
-│   │   ├── login/
-│   │   │   └── page.tsx
-│   │   ├── register/
-│   │   │   └── page.tsx
-│   │   └── layout.tsx
-│   ├── api/
-│   │   └── auth/
-│   │       ├── register/
-│   │       │   └── route.ts
-│   │       └── login/
-│   │           └── route.ts
-│   ├── actions/
-│   │   └── auth-actions.ts
-│   └── layout.tsx
-│
-├── prisma/
-│   └── schema.prisma
-│
+│   │       ├── README.md
+│   │       ├── index.ts
+│   │       ├── domain/invoice.ts
+│   │       ├── application/create-invoice.ts
+│   │       ├── infrastructure/prisma-invoice-repository.ts
+│   │       └── api/composition.ts
+│   ├── shared/
+│   │   ├── kernel/contracts.ts
+│   │   └── ui/button.tsx
+│   ├── infrastructure/prisma.ts
+│   ├── config/env.ts
+│   └── app/
+│       ├── (auth)/register/page.tsx
+│       ├── api/auth/register/route.ts
+│       ├── actions/auth-actions.ts
+│       └── layout.tsx
+├── prisma/schema.prisma
 ├── tests/
-│   └── e2e/
-│       └── auth.spec.ts
-│
-├── .env
-├── .env.example
+│   ├── e2e/auth.spec.ts
+│   └── packages/installed-consumer.test.ts
+├── .env.example                       # Names only; never real credentials
 ├── tsconfig.json
-├── next.config.js
-└── package.json
+└── package.json                        # Exact shared-package versions
 ```
 
 ---
 
 **End of Guide**
 
-*This is a living document. Update as architectural decisions evolve.*
+*Owners update this living guide as architectural decisions evolve.*
 *Always follow clean arch, it's not that much overhead.*
 
 ---
 
 **Remember:**
-- Domain is pure business logic
-- Application orchestrates use-cases
+- Domain expresses pure rules and invariants
+- Application owns named workflows and their IO contracts
 - Infrastructure handles frameworks, APIs, databases
 - Always dependency inversion (interfaces over implementations)
 - Prefer test doubles over mocks
 - Functional programming bias (pure, immutable)
-- Feature folders with layers inside
-- Barrel exports everywhere
+- Capability modules contain only the layers they need
+- Public roots and explicit runtime entries protect boundaries
 - Next.js routes/actions call use-cases, never repositories directly
 
 **When in doubt:** Ask "Does this violate dependency inversion?" If yes, refactor.

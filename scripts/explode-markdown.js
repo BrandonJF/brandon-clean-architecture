@@ -23,34 +23,23 @@ fs.mkdirSync(OUTPUT_DIR, { recursive: true });
 const content = fs.readFileSync(INPUT_FILE, 'utf-8');
 const lines = content.split('\n');
 
-// Extract title and metadata from the top
-let title = 'Brandon\'s Clean Architecture Guide';
-let description = '';
+// Keep GUIDE.md authoritative for the home page and section pages.
 let currentSection = null;
 let sections = [];
 let currentContent = [];
-let inFrontMatter = false;
+let inTableOfContents = false;
 
 for (let i = 0; i < lines.length; i++) {
   const line = lines[i];
 
-  // Extract title from first H1
-  if (line.startsWith('# ') && !title) {
-    title = line.replace('# ', '').trim();
+  // Source-only anchors do not resolve from generated section pages.
+  if (line.startsWith('## Table of Contents')) {
+    inTableOfContents = true;
     continue;
   }
-
-  // Extract description from blockquote
-  if (line.startsWith('> ')) {
-    description = line.replace('> ', '').trim();
-    continue;
-  }
-
-  // Skip metadata lines at top
-  if (line.startsWith('**Last Updated') ||
-      line.startsWith('**Status') ||
-      line.startsWith('**Target Audience')) {
-    continue;
+  if (inTableOfContents) {
+    if (!line.startsWith('## ')) continue;
+    inTableOfContents = false;
   }
 
   // Detect H2 section start
@@ -88,48 +77,9 @@ if (currentSection) {
   });
 }
 
-// Create index.md with introduction
-const indexContent = `# ${title}
-
-${description}
-
-**Last Updated**: 2025-12-09
-**Author**: Brandon John-Freso
-**License**: MIT
-
----
-
-## About This Guide
-
-This is a comprehensive, opinionated guide to Clean Architecture for TypeScript and Next.js projects. It reflects my personal preferences built over years of building production systems.
-
-### What You'll Learn
-
-- How to structure TypeScript/Next.js projects with Clean Architecture
-- Feature-first directory organization (not layer-first)
-- Dependency inversion and composition patterns
-- Testing strategies with test doubles (not mocking frameworks)
-- Next.js integration patterns
-- Migration strategies from messy codebases
-
-### Philosophy
-
-**"Always follow clean arch, it's not that much overhead."**
-
-This guide prioritizes:
-- Domain isolation
-- Developer ergonomics
-- Fast tests (<50ms for unit tests)
-- Simple, clear vocabulary (no heavy jargon)
-- Functional programming bias
-
-### How to Use This Guide
-
-Navigate through the sections in the sidebar. Each section is standalone but builds on previous concepts.
-
-Start with [Philosophy & Core Principles](philosophy-core-principles.md) to understand the why, then move through the architectural layers and patterns.
-
----
+// Preserve source metadata and introduction instead of maintaining a second guide.
+const introduction = content.split(/^## Table of Contents\s*$/m)[0].trim();
+const indexContent = `${introduction}
 
 ## Quick Navigation
 
@@ -159,7 +109,7 @@ sections.forEach(section => {
     }
   }
 
-  fs.writeFileSync(filepath, section.content + navigation);
+  fs.writeFileSync(filepath, (section.content + navigation).trimEnd() + '\n');
   console.log(`Created: ${filename}`);
 });
 
