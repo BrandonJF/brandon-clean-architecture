@@ -1,5 +1,5 @@
 site_name: Brandon's Clean Architecture Guide
-site_description: Opinionated Clean Architecture guide for TypeScript/Next.js projects
+site_description: Canonical TwelveApart architecture for TypeScript web, CLI and AI applications
 site_author: Brandon John-Freso
 site_url: https://brandonjf.github.io/brandon-clean-architecture/
 
@@ -66,6 +66,7 @@ nav:
   - Next.js Integration: nextjs-integration.md
   - Common Patterns: common-patterns.md
   - Migration Strategies: migration-strategies.md
+  - Shared Capabilities & Governance: shared-capabilities-governance.md
   - Quick Reference: summary-quick-reference-checklist.md
   - Example Project: appendix-example-project-structure.md
 

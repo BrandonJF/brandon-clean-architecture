@@ -1,10 +1,10 @@
 # Brandon's Clean Architecture Guide
 
-> My opinionated take on Clean Architecture for TypeScript/Next.js projects, distilled from over 15 years of building production systems across web, mobile, and AI platforms.
+> My opinionated take on Clean Architecture for TypeScript applications across web, CLI and AI runtimes, distilled from over 15 years of building production systems across web, mobile, and AI platforms.
 
 **Author**: [Brandon John-Freso](https://www.linkedin.com/in/brandonjf)
 **License**: MIT
-**Last Updated**: 2025-12-09
+**Last Updated**: 2026-10-19
 
 ---
 
@@ -12,7 +12,7 @@
 
 **[🌐 View Documentation Website →](https://brandonjf.github.io/brandon-clean-architecture/)**
 
-The complete guide is available as a beautiful, searchable documentation site built with MkDocs Material.
+[GUIDE.md](GUIDE.md) supplies the canonical, agent-readable TwelveApart architecture. The MkDocs site publishes the same rules and examples.
 
 ### Quick Links
 
@@ -31,13 +31,13 @@ This is my answer. Core principles with my own sprinkle on top, built from exper
 
 **What this guide covers:**
 
-- **Feature-first directory structure** (not layer-first)
+- **Capability-first module structure** with explicit public/runtime APIs
 - **Dependency inversion** patterns and composition roots
 - **Testing with test doubles** (not mocking frameworks)
-- **Next.js integration** - Server Components, Server Actions, API Routes
+- **Platform integration** - Next.js examples plus TanStack and Bun/Node mappings
 - **Type system best practices** - Zod validation, interface vs type
 - **Migration strategies** from messy codebases
-- **Complete working examples**
+- **Focused examples**, cohesive migrations and installed-package acceptance
 
 ### Philosophy
 
@@ -46,7 +46,7 @@ This is my answer. Core principles with my own sprinkle on top, built from exper
 I prioritize:
 - ✅ Domain isolation
 - ✅ Developer ergonomics
-- ✅ Fast tests (<50ms for unit tests)
+- ✅ Fast, consequence-proportional tests
 - ✅ Simple, clear vocabulary (no heavy jargon)
 - ✅ Functional programming bias
 
@@ -70,10 +70,11 @@ npm run docs:dev
 
 ### Building the Docs
 
-The documentation is generated from [`GUIDE.md`](GUIDE.md) using a markdown exploder script:
+The markdown exploder generates documentation from [`GUIDE.md`](GUIDE.md):
 
 ```bash
-# Explode GUIDE.md into separate pages in docs/
+# Verify the generator, then regenerate separate pages in docs/
+node --test tests/explode-markdown.test.js
 npm run explode
 
 # Build static site
@@ -87,7 +88,7 @@ npm run docs:build
 ```
 brandon-clean-architecture/
 ├── README.md              # This file (overview)
-├── GUIDE.md               # Full guide source (2000+ lines)
+├── GUIDE.md               # Canonical guide source
 ├── docs/                  # Generated from GUIDE.md
 │   ├── index.md
 │   ├── philosophy-core-principles.md
